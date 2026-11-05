@@ -557,6 +557,19 @@ body { padding: 1rem 0.75rem 3rem; }
 .pago-resumen-line { display: flex; justify-content: space-between; font-size: 13px; color: var(--navy); padding: 3px 0; }
 .btn-wa-resumen { width: 100%; padding: 13px; background: #25D366; color: #fff; border: none; border-radius: var(--radius); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s; }
 .btn-wa-resumen:hover { background: #1da851; }
+/* [NEW 05-nov] Descripción del gasto: campo con teclado + listado que filtra mientras se escribe */
+.gasto-combo{position:relative;}
+.gasto-combo input{width:100%;padding-right:36px;}
+.gasto-combo-btn{position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;font-size:14px;color:#888;padding:6px 8px;cursor:pointer;}
+.gasto-sugerencias{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;max-height:220px;overflow-y:auto;background:#fff;border:1.5px solid #e2e8ee;border-radius:10px;box-shadow:0 8px 24px rgba(26,58,92,.18);-webkit-overflow-scrolling:touch;}
+.gasto-sugerencias.abierto{display:block;}
+.gasto-sug-item{padding:11px 12px;font-size:13px;color:#1a3a5c;border-bottom:1px solid #f0f3f6;cursor:pointer;}
+.gasto-sug-item:last-child{border-bottom:none;}
+.gasto-sug-item:active,.gasto-sug-item:hover{background:#fdecea;}
+.gasto-sug-item b{color:#c0392b;}
+.gasto-sug-libre{color:#0a7c6e;font-weight:600;border-top:1.5px solid #e2e8ee;}
+.gasto-sug-libre span{font-weight:400;font-style:italic;color:#888;font-size:12px;}
+.gasto-sug-vacio{padding:10px 12px;font-size:12px;color:#888;font-style:italic;}
 </style>
 </head>
 <body>
@@ -862,7 +875,7 @@ body { padding: 1rem 0.75rem 3rem; }
         <div class="field"><label for="gasto-fecha">Fecha</label><input type="date" id="gasto-fecha" class="focus-red"></div>
       </div>
             <div class="grid-2">
-        <div class="field"><label for="gasto-categoria">Descripción del gasto</label><select id="gasto-categoria" class="focus-red" onchange="toggleGastoOtros()"><option value="">Selecciona...</option></select></div>
+        <div class="field"><label for="gasto-categoria-buscar">Descripción del gasto</label><div class="gasto-combo"><input type="text" id="gasto-categoria-buscar" class="focus-red mayus" placeholder="Buscar gasto..." autocomplete="off" maxlength="100" oninput="gastoComboInput()" onfocus="gastoComboAbrir()" onblur="setTimeout(gastoComboCerrar,180)"><button type="button" class="gasto-combo-btn" tabindex="-1" onmousedown="event.preventDefault()" onclick="gastoComboToggle()" aria-label="Ver listado">&#9662;</button><div id="gasto-sugerencias" class="gasto-sugerencias"></div></div><select id="gasto-categoria" class="focus-red" onchange="toggleGastoOtros()" style="display:none" tabindex="-1" aria-hidden="true"><option value="">Selecciona...</option></select></div>
         <div class="field"><label for="gasto-monto">Monto ($)</label><input type="text" id="gasto-monto" placeholder="0.00" inputmode="decimal" autocomplete="off" maxlength="10" class="focus-red" oninput="filtrarInputMonto(this)"></div>
       </div>
       <div class="field" id="wrap-gasto-otros" style="display:none;margin-top:8px;">
@@ -1149,7 +1162,7 @@ const LISTAS_BLANCAS = {
   empleadoGasto: [], // [NEW] ídem + 'Administración'
   formapago: ['Contado','Crédito','Transferencia','Cheque','Mixto'],
   pagoForma: ['Efectivo','Transferencia','Cheque'],
-  /* [NEW] Listado cerrado de gastos — el asesor solo puede escoger una de estas opciones
+  /* [NEW] Listado de gastos — el asesor escribe y se filtra este listado (05-nov: ordenado A-Z con OTROS al final para escribir otro gasto)
      (no puede escribir). Debe ser IGUAL a GASTOS_PERMITIDOS en dashboard.js (aqua-luan-gestion). */
   gastoDesc: ['COMBUSTIBLE','DEPOSITO','ALMUERZO','PEAJE','RETENCION','TRICICLO','ENCOMIENDAS','VIGILANTE','AIRE PARA LLANTAS','RECARGAS','SACOS DE SAL','ASCENSOR','VACUNAS','RECARGUE DE GAS','JUGOS BODEGUEROS','IMPRESION DE FACTURAS','CANECA DE JABON NEUTRO','PALLETS','PARCHE PARA LLANTA','MOTOTAXI','CAMBIO DE LLANTAS','COMPRA DE ACEITE PARA MOTOR','CAMBIO DE ACEITE','LIQUIDO DE FRENO','CLORO EN GRANO','MANO DE OBRA (CAMION)','REPUESTOS PARA CAMION','OTROS GASTOS DE CAMION','COMPRAS DE OFICINA','OTROS'],
   productos: ['BOTELLON 20LT','BOTELLON CON LLAVE','PACA 625ML AZUL','PACA 600ML VERDE','PACA 1000ML','PACA 400ML','GALONES 4LT','POMA 5LTS','ENVASE CON LLAVE','ENVASE AZUL ADICIONAL']
@@ -1708,6 +1721,79 @@ function toggleGastoOtros(){
   if(!esOtros && input) input.value='';
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',renderOpcionesGastoSelect); else renderOpcionesGastoSelect();
+/* [NEW 05-nov] Descripción del gasto con teclado + match:
+   - El asesor escribe y se filtra el listado (sin importar tildes ni mayúsculas).
+   - Si lo escrito coincide con una opción del listado, se guarda esa opción.
+   - Si escribe algo que no está en el listado, se guarda como categoría OTROS con
+     su texto como descripción (así se ve en el dashboard, igual que el OTROS de antes).
+   El <select id="gasto-categoria"> sigue existiendo (oculto) y registrarGasto() no cambia. */
+function _normGasto(t){ return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/\s+/g,' ').trim(); }
+/* [NEW 05-nov] Listado ordenado alfabéticamente, con OTROS siempre al final */
+function _gastoListaOrdenada(){
+  return LISTAS_BLANCAS.gastoDesc.filter(o=>o!=='OTROS').slice().sort((x,y)=>x.localeCompare(y,'es',{sensitivity:'base'})).concat(LISTAS_BLANCAS.gastoDesc.includes('OTROS')?['OTROS']:[]);
+}
+function _gastoSincronizar(){
+  const inp=document.getElementById('gasto-categoria-buscar');
+  const sel=document.getElementById('gasto-categoria');
+  const wrap=document.getElementById('wrap-gasto-otros');
+  const otros=document.getElementById('gasto-otros-desc');
+  if(!inp||!sel) return;
+  const n=_normGasto(inp.value);
+  const exacto=LISTAS_BLANCAS.gastoDesc.find(o=>_normGasto(o)===n);
+  if(exacto){
+    const cambio=sel.value!==exacto;
+    sel.value=exacto;
+    if(exacto==='OTROS'){ if(wrap) wrap.style.display='block'; if(cambio&&otros) otros.value=''; }
+    else { if(wrap) wrap.style.display='none'; if(otros) otros.value=''; }
+    return;
+  }
+  // Vacío o texto que no está en el listado: queda sin seleccionar (el asesor elige del
+  // listado, o escoge OTROS al final para escribir otra descripción)
+  sel.value=''; if(wrap) wrap.style.display='none'; if(otros) otros.value='';
+}
+function _gastoRenderSugerencias(){
+  const inp=document.getElementById('gasto-categoria-buscar');
+  const box=document.getElementById('gasto-sugerencias');
+  if(!inp||!box) return;
+  const n=_normGasto(inp.value);
+  const lista=_gastoListaOrdenada();
+  let items=n ? lista.filter(o=>o!=='OTROS' && _normGasto(o).includes(n)) : lista.filter(o=>o!=='OTROS');
+  const marcar=o=>{
+    if(!n) return escHTML(o);
+    const no=_normGasto(o); const i=no.indexOf(n);
+    if(i<0||no.length!==o.length) return escHTML(o);
+    return escHTML(o.slice(0,i))+'<b>'+escHTML(o.slice(i,i+n.length))+'</b>'+escHTML(o.slice(i+n.length));
+  };
+  let html=items.map(o=>`<div class="gasto-sug-item" data-v="${escHTML(o)}">${marcar(o)}</div>`).join('');
+  if(!items.length) html=`<div class="gasto-sug-vacio">No está en el listado. Elige OTROS para escribirlo.</div>`;
+  // OTROS siempre al final, para que el asesor pueda escribir otra descripción
+  if(lista.includes('OTROS')) html+=`<div class="gasto-sug-item gasto-sug-libre" data-v="OTROS">OTROS <span>(escribir otro gasto)</span></div>`;
+  box.innerHTML=html;
+  box.querySelectorAll('.gasto-sug-item').forEach(el=>{
+    el.addEventListener('mousedown',ev=>ev.preventDefault());
+    el.addEventListener('click',()=>{
+      const escrito=inp.value.trim();
+      const escritoNoEsta=!!escrito && !LISTAS_BLANCAS.gastoDesc.some(o=>_normGasto(o)===_normGasto(escrito));
+      inp.value=el.dataset.v;
+      _gastoSincronizar(); gastoComboCerrar();
+      if(el.dataset.v==='OTROS'){
+        const o=document.getElementById('gasto-otros-desc');
+        // si ya había escrito algo que no está en el listado, se pasa al campo de OTROS
+        if(o){ if(escritoNoEsta) o.value=escrito.toLocaleUpperCase('es-EC'); o.focus(); }
+      } else inp.blur();
+    });
+  });
+  box.classList.add('abierto');
+}
+function gastoComboInput(){ _gastoSincronizar(); _gastoRenderSugerencias(); }
+function gastoComboAbrir(){ _gastoRenderSugerencias(); }
+function gastoComboCerrar(){ const b=document.getElementById('gasto-sugerencias'); if(b) b.classList.remove('abierto'); }
+function gastoComboToggle(){
+  const b=document.getElementById('gasto-sugerencias'); const inp=document.getElementById('gasto-categoria-buscar');
+  if(b&&b.classList.contains('abierto')){ gastoComboCerrar(); return; }
+  if(inp) inp.focus(); _gastoRenderSugerencias();
+}
+function gastoComboLimpiar(){ const inp=document.getElementById('gasto-categoria-buscar'); if(inp) inp.value=''; gastoComboCerrar(); }
 function _setStatus(id,t,m){ const el=document.getElementById(id); el.className='status '+t; el.textContent=m; }
 
 function resetGpsBadge(){ document.getElementById('gpsBadge').className='gps-badge wait'; document.getElementById('gpsBadgeText').textContent=navigator.onLine?'Obteniendo ubicación GPS...':'Obteniendo ubicación GPS (sin internet, puede tardar más)...'; document.getElementById('m-gps').textContent='-'; }
@@ -2310,7 +2396,7 @@ async function registrarGasto(){
   let desc=categoria;
   const ref=textoMayus(document.getElementById('gasto-ref').value,100);
   if(!esValorSeguro(empleado,LISTAS_BLANCAS.empleadoGasto)){setStatusGastos('error','Selecciona el responsable.');return;}
-  if(!esValorSeguro(categoria,LISTAS_BLANCAS.gastoDesc)){setStatusGastos('error','Selecciona la descripción del gasto del listado.');return;}
+  if(!esValorSeguro(categoria,LISTAS_BLANCAS.gastoDesc)){setStatusGastos('error','Selecciona la descripción del gasto del listado (o elige OTROS para escribir otro).');return;}
   if(categoria==='OTROS'){
     const otrosDesc=textoMayus(document.getElementById('gasto-otros-desc').value,100);
     if(!otrosDesc){setStatusGastos('error','Cuando seleccionas OTROS, debes escribir la descripción del gasto.');return;}
@@ -2334,6 +2420,7 @@ async function registrarGasto(){
     const elGastoEmpleado=document.getElementById('gasto-empleado');
     if(elGastoEmpleado && elGastoEmpleado.tagName==='SELECT') elGastoEmpleado.value='';
     document.getElementById('gasto-categoria').value='';
+    if(typeof gastoComboLimpiar==='function') gastoComboLimpiar(); // [NEW 05-nov] limpia el campo con teclado
     const otrosInput=document.getElementById('gasto-otros-desc');
     if(otrosInput) otrosInput.value='';
     const wrapOtros=document.getElementById('wrap-gasto-otros');
